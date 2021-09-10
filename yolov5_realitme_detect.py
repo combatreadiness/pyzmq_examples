@@ -62,7 +62,7 @@ def detect():
     context = zmq.Context()
     socket = context.socket(zmq.SUB)
     print ("Collecting updates from server...")
-    socket.connect ("tcp://210.107.197.247:%s" % port)
+    socket.connect ("tcp://host:%s" % port)
     topicfilter = "test"
     socket.setsockopt_string(zmq.SUBSCRIBE, topicfilter)
     for update_nbr in range(1000):
