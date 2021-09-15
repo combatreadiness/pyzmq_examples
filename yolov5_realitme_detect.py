@@ -15,69 +15,90 @@ from numpy import random
 from models.experimental import attempt_load
 from utils.datasets import letterbox
 from utils.general import check_img_size, check_requirements, non_max_suppression, scale_coords
-#from utils.plots import plot_one_box
 from utils.torch_utils import select_device
 
 import zmq
 
+import threading
+from threading import Thread
 
-SOURCE = 'data/images/DJI_0004.jpg'
-WEIGHTS = 'yolov5s.pt'
-IMG_SIZE = 640
-DEVICE = ''
-AUGMENT = False
-CONF_THRES = 0.25
-IOU_THRES = 0.45
-CLASSES = None
-AGNOSTIC_NMS = False
 
-port = "10010"
+
+subHost = "210.107.197.247"
+pubHost = "210.107.197.247"
+subPort = "10010"
+pubPort = "10020"
 # Socket to talk to server
 
 
-def detect():
-    source, weights, imgsz = SOURCE, WEIGHTS, IMG_SIZE
 
-    # Initialize
-    device = select_device(DEVICE)
-    half = device.type != 'cpu'  # half precision only supported on CUDA
-    print('device:', device)
+class yoloDetector():
 
+    #yolo parameters
+    SOURCE = 'data/images/DJI_0004.jpg'
+    WEIGHTS = 'yolov5s.pt'
+    IMG_SIZE = 640
+    DEVICE = ''
+    AUGMENT = False
+    CONF_THRES = 0.25
+    IOU_THRES = 0.45
+    CLASSES = None
+    AGNOSTIC_NMS = False
+
+    def __init__(self):
+        source, weights, imgsz = self.SOURCE, self.WEIGHTS, self.IMG_SIZE
+        device = select_device(self.DEVICE)
+        half = device.type != 'cpu'  # half precision only supported on CUDA
+        print('device:', device)
+
+        
     # Load model
-    model = attempt_load(weights, map_location=device)  # load FP32 model
-    stride = int(model.stride.max())  # model stride
-    imgsz = check_img_size(imgsz, s=stride)  # check img_size
-    if half:
-        model.half()  # to FP16
+        model = attempt_load(weights, map_location=device)  # load FP32 model
+        stride = int(model.stride.max())  # model stride
+        imgsz = check_img_size(imgsz, s=stride)  # check img_size
+        if half:
+            model.half()  # to FP16
 
     # Get names and colors
-    names = model.module.names if hasattr(model, 'module') else model.names
-    colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
+        names = model.module.names if hasattr(model, 'module') else model.names
 
-    # Run inference
-    if device.type != 'cpu':
-        model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
+        if device.type != 'cpu':
+           model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
+        
+
+class zmqHandler(self):
+
+    subHost = "210.107.197.247"
+    pubHost = "210.107.197.247"
+    subPort = "10010"
+    pubPort = "10020"
+
+    def __init__(self):
+
+
+def detect():
+
+    detector = yoloDetector()
+
 
 
     context = zmq.Context()
     socket = context.socket(zmq.SUB)
     print ("Collecting updates from server...")
-    socket.connect ("tcp://host:%s" % port)
+    socket.connect ("tcp:/%s:%s" %(subHost,subPort))
     topicfilter = "test"
+    socket.setsockopt(zmq.CONFLATE, 1)
     socket.setsockopt_string(zmq.SUBSCRIBE, topicfilter)
+
     for update_nbr in range(1000):
         topic = socket.recv()
         msgtype = socket.recv()
         framedata = socket.recv()
-        #print(framedata)
         framedata = np.frombuffer(framedata, dtype='uint8')
         framedata = cv2.imdecode(framedata, cv2.IMREAD_COLOR)
         framedata = cv2.cvtColor(framedata, cv2.COLOR_BGR2RGB)
-        #plt.imshow(framedata)
-        #plt.show()
-
+        
         # Load image
-        #print(framedata.shape)
         img0 = framedata  # BGR
         assert img0 is not None, 'Image Not Found ' + source
 
@@ -95,7 +116,6 @@ def detect():
             img = img.unsqueeze(0)
 
         # Inference
-        #t0 = time_synchronized()
         t0 = time.time()
         pred = model(img, augment=AUGMENT)[0]
         #print('pred shape:', pred.shape)
@@ -124,14 +144,34 @@ def detect():
                 label = f'{names[int(cls)]} {conf:.2f}'
     #            plot_one_box(xyxy, img0, label=label, color=colors[int(cls)], line_thickness=3)
 
-            print(f'Inferencing and Processing Done. ({time.time() - t0:.3f}s)')
+            #print(f'Inferencing and Processing Done. ({time.time() - t0:.3f}s)')
 
         # Stream results
-#        print(s)
+        print(s)
         #cv2.imshow(source, img0)
         #cv2.waitKey(0)  # 1 millisecond
 
+
+
+
+
+def get_arguments():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--pubHost', '-p', nargs=1, type=str, help='ZeroMQ Forwarder Host IP address', default='210.107.197.247', dest='zmqHost')
+    parser.add_argument('--pubPort', '-', nargs=1, type=int, help='ZeroMQ Forwarder port number', default=[10010], dest='zmqPort')
+    parser.add_argument('--pubTopic', '-t', nargs=1, type=str, help='ZeroMQ Topic', default='test', dest='zmqTopic')
+    parser.add_argument('--subHost', '-r', nargs=1, type=str, help='Redis IP address', default='210.107.197.247', dest='redisHost')
+    parser.add_argument('--subPort', '-o', nargs=1, type=int, help='Redis port number', default=[6379], dest='redisPort')
+    parser.add_argument('--subTopic', '-n', nargs=1, type=int, help='Redis db number', default=[1], dest='redisNumber')
+
+    option_list = parser.parse_args()
+    return option_list
+
+
+
+
 if __name__ == '__main__':
     check_requirements(exclude=('pycocotools', 'thop'))
+    option_list = get_arguments()
     with torch.no_grad():
             detect()
