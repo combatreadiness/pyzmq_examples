@@ -1,168 +1,78 @@
 import argparse
 import sys
-import time
-from pathlib import Path
-
 import cv2
 import numpy as np
 import torch
-import torch.backends.cudnn as cudnn
-
-FILE = Path(__file__).absolute()
-sys.path.append(FILE.parents[0].as_posix())  # add yolov5/ to path
-
-from numpy import random
-from models.experimental import attempt_load
-from utils.datasets import letterbox
-from utils.general import check_img_size, check_requirements, non_max_suppression, scale_coords
-from utils.torch_utils import select_device
-
 import zmq
-
-import threading
-from threading import Thread
+import json
 
 
-
-subHost = "210.107.197.247"
-pubHost = "210.107.197.247"
-subPort = "10010"
-pubPort = "10020"
-# Socket to talk to server
+class zmqHandler():
 
 
+    def __init__(self, host, port, topic):
 
-class yoloDetector():
+        self.host = host
+        self.port = port
+        self.topic = topic
+       #self.socket
 
-    #yolo parameters
-    SOURCE = 'data/images/DJI_0004.jpg'
-    WEIGHTS = 'yolov5s.pt'
-    IMG_SIZE = 640
-    DEVICE = ''
-    AUGMENT = False
-    CONF_THRES = 0.25
-    IOU_THRES = 0.45
-    CLASSES = None
-    AGNOSTIC_NMS = False
+    def subscirbeInit(self):
+        context = zmq.Context()
+        self.socket = context.socket(zmq.SUB)
+        self.socket.connect ("tcp://%s:%s" %(self.host,self.port))
+        self.socket.setsockopt(zmq.CONFLATE, 1) # subscribe only latest data
+        self.socket.setsockopt_string(zmq.SUBSCRIBE, self.topic)
 
-    def __init__(self):
-        source, weights, imgsz = self.SOURCE, self.WEIGHTS, self.IMG_SIZE
-        device = select_device(self.DEVICE)
-        half = device.type != 'cpu'  # half precision only supported on CUDA
-        print('device:', device)
+    def subscribe(self):
+        topic = self.socket.recv()
+        msgtype = self.socket.recv()
+        framedata = self.socket.recv()
+        return framedata
 
+    def publishInit(self):
+        context = zmq.Context()
+        self.socket = context.socket(zmq.PUB)
+        self.socket.connect ("tcp://%s:%s" %(self.host,self.port))
         
-    # Load model
-        model = attempt_load(weights, map_location=device)  # load FP32 model
-        stride = int(model.stride.max())  # model stride
-        imgsz = check_img_size(imgsz, s=stride)  # check img_size
-        if half:
-            model.half()  # to FP16
+    
+    def publish(self, messagedata):
+        self.socket.send_string("%s %s" %(self.topic,messagedata))
+                
 
-    # Get names and colors
-        names = model.module.names if hasattr(model, 'module') else model.names
+    
 
-        if device.type != 'cpu':
-           model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
+def detect(option_list):
+
+    #zeromq init
+    zmqSubscriber = zmqHandler(option_list.subHost, option_list.subPort, option_list.subTopic)
+    zmqSubscriber.subscirbeInit()
+    zmqPublisher = zmqHandler(option_list.pubHost, option_list.pubPort, option_list.pubTopic)
+    zmqPublisher.publishInit()
+
+    #model init
+    model = torch.hub.load('.', 'yolov5s', pretrained=True, source='local')
+
+# Inference
+
+
+    while True:
+        framedata = zmqSubscriber.subscribe()
         
-
-class zmqHandler(self):
-
-    subHost = "210.107.197.247"
-    pubHost = "210.107.197.247"
-    subPort = "10010"
-    pubPort = "10020"
-
-    def __init__(self):
-
-
-def detect():
-
-    detector = yoloDetector()
-
-
-
-    context = zmq.Context()
-    socket = context.socket(zmq.SUB)
-    print ("Collecting updates from server...")
-    socket.connect ("tcp:/%s:%s" %(subHost,subPort))
-    topicfilter = "test"
-    socket.setsockopt(zmq.CONFLATE, 1)
-    socket.setsockopt_string(zmq.SUBSCRIBE, topicfilter)
-
-    for update_nbr in range(1000):
-        topic = socket.recv()
-        msgtype = socket.recv()
-        framedata = socket.recv()
         framedata = np.frombuffer(framedata, dtype='uint8')
         framedata = cv2.imdecode(framedata, cv2.IMREAD_COLOR)
         framedata = cv2.cvtColor(framedata, cv2.COLOR_BGR2RGB)
-        
-        # Load image
-        img0 = framedata  # BGR
-        assert img0 is not None, 'Image Not Found ' + source
-
-        # Padded resize
-        img = letterbox(img0, imgsz, stride=stride)[0]
-
-        # Convert
-        img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
-        img = np.ascontiguousarray(img)
-
-        img = torch.from_numpy(img).to(device)
-        img = img.half() if half else img.float()  # uint8 to fp16/32
-        img /= 255.0  # 0 - 255 to 0.0 - 1.0
-        if img.ndimension() == 3:
-            img = img.unsqueeze(0)
-
-        # Inference
-        t0 = time.time()
-        pred = model(img, augment=AUGMENT)[0]
-        #print('pred shape:', pred.shape)
-
-        # Apply NMS
-        pred = non_max_suppression(pred, CONF_THRES, IOU_THRES, classes=CLASSES, agnostic=AGNOSTIC_NMS)
-
-        # Process detections
-        det = pred[0]
-        # print('det shape:', det.shape)
-
-        s = ''
-        s += '%gx%g ' % img.shape[2:]  # print string
-
-        if len(det):
-            # Rescale boxes from img_size to img0 size
-            det[:, :4] = scale_coords(img.shape[2:], det[:, :4], img0.shape).round()
-
-            # Print results
-            for c in det[:, -1].unique():
-                n = (det[:, -1] == c).sum()  # detections per class
-                s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
-
-            # Write results
-            for *xyxy, conf, cls in reversed(det):
-                label = f'{names[int(cls)]} {conf:.2f}'
-    #            plot_one_box(xyxy, img0, label=label, color=colors[int(cls)], line_thickness=3)
-
-            #print(f'Inferencing and Processing Done. ({time.time() - t0:.3f}s)')
-
-        # Stream results
-        print(s)
-        #cv2.imshow(source, img0)
-        #cv2.waitKey(0)  # 1 millisecond
-
-
-
-
+        results = model(framedata)
+        zmqPublisher.publish((results.pandas().xyxy[0].to_json(orient='records')))
 
 def get_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--pubHost', '-p', nargs=1, type=str, help='ZeroMQ Forwarder Host IP address', default='210.107.197.247', dest='zmqHost')
-    parser.add_argument('--pubPort', '-', nargs=1, type=int, help='ZeroMQ Forwarder port number', default=[10010], dest='zmqPort')
-    parser.add_argument('--pubTopic', '-t', nargs=1, type=str, help='ZeroMQ Topic', default='test', dest='zmqTopic')
-    parser.add_argument('--subHost', '-r', nargs=1, type=str, help='Redis IP address', default='210.107.197.247', dest='redisHost')
-    parser.add_argument('--subPort', '-o', nargs=1, type=int, help='Redis port number', default=[6379], dest='redisPort')
-    parser.add_argument('--subTopic', '-n', nargs=1, type=int, help='Redis db number', default=[1], dest='redisNumber')
+    parser.add_argument('--pubHost',  nargs=1, type=str, help='Forwarder IP address for publish', default='localhost', dest='pubHost')
+    parser.add_argument('--pubPort',  nargs=1, type=str, help='Forwarder port number for publish', default='10020', dest='pubPort')
+    parser.add_argument('--pubTopic', nargs=1, type=str, help='Publish Topic', default='result', dest='pubTopic')
+    parser.add_argument('--subHost',  nargs=1, type=str, help='Forwarder IP address for subscribe', default='localhost', dest='subHost')
+    parser.add_argument('--subPort',  nargs=1, type=str, help='Forwarder port number for subscribe', default='10010', dest='subPort')
+    parser.add_argument('--subTopic', nargs=1, type=str, help='subscribe Topic', default='test', dest='subTopic')
 
     option_list = parser.parse_args()
     return option_list
@@ -171,7 +81,6 @@ def get_arguments():
 
 
 if __name__ == '__main__':
-    check_requirements(exclude=('pycocotools', 'thop'))
-    option_list = get_arguments()
+    option_list = get_arguments()   
     with torch.no_grad():
-            detect()
+            detect(option_list)
