@@ -2,9 +2,9 @@ import argparse
 import sys
 import cv2
 import numpy as np
-import torch
 import zmq
 import json
+import torch
 
 
 class zmqHandler():
@@ -26,7 +26,6 @@ class zmqHandler():
 
     def subscribe(self):
         topic = self.socket.recv()
-        msgtype = self.socket.recv()
         framedata = self.socket.recv()
         return framedata
 
@@ -54,23 +53,26 @@ def detect(option_list):
     model = torch.hub.load('.', 'yolov5s', pretrained=True, source='local')
 
 # Inference
-
-
     while True:
+        
         framedata = zmqSubscriber.subscribe()
         
-        framedata = np.frombuffer(framedata, dtype='uint8')
-        framedata = cv2.imdecode(framedata, cv2.IMREAD_COLOR)
-        framedata = cv2.cvtColor(framedata, cv2.COLOR_BGR2RGB)
-        results = model(framedata)
-        zmqPublisher.publish((results.pandas().xyxy[0].to_json(orient='records')))
+        try:
+                
+            framedata = np.frombuffer(framedata, dtype='uint8')
+            framedata = cv2.imdecode(framedata, cv2.IMREAD_COLOR)
+            framedata = cv2.cvtColor(framedata, cv2.COLOR_BGR2RGB)
+            results = model(framedata)
+            
+            zmqPublisher.publish((results.pandas().xyxy[0].to_json(orient='records')))
+        
 
 def get_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--pubHost',  nargs=1, type=str, help='Forwarder IP address for publish', default='localhost', dest='pubHost')
+    parser.add_argument('--pubHost',  nargs=1, type=str, help='Forwarder IP address for publish', default='210.107.197.247', dest='pubHost')
     parser.add_argument('--pubPort',  nargs=1, type=str, help='Forwarder port number for publish', default='10020', dest='pubPort')
     parser.add_argument('--pubTopic', nargs=1, type=str, help='Publish Topic', default='result', dest='pubTopic')
-    parser.add_argument('--subHost',  nargs=1, type=str, help='Forwarder IP address for subscribe', default='localhost', dest='subHost')
+    parser.add_argument('--subHost',  nargs=1, type=str, help='Forwarder IP address for subscribe', default='210.107.197.247', dest='subHost')
     parser.add_argument('--subPort',  nargs=1, type=str, help='Forwarder port number for subscribe', default='10010', dest='subPort')
     parser.add_argument('--subTopic', nargs=1, type=str, help='subscribe Topic', default='test', dest='subTopic')
 
