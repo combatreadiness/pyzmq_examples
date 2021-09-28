@@ -56,26 +56,24 @@ def detect(option_list):
     while True:
         
         framedata = zmqSubscriber.subscribe()
+                        
+        framedata = np.frombuffer(framedata, dtype='uint8')
+        framedata = cv2.imdecode(framedata, cv2.IMREAD_COLOR)
+        framedata = cv2.cvtColor(framedata, cv2.COLOR_BGR2RGB)
+        results = model(framedata)
         
-        try:
-                
-            framedata = np.frombuffer(framedata, dtype='uint8')
-            framedata = cv2.imdecode(framedata, cv2.IMREAD_COLOR)
-            framedata = cv2.cvtColor(framedata, cv2.COLOR_BGR2RGB)
-            results = model(framedata)
-            
-            zmqPublisher.publish((results.pandas().xyxy[0].to_json(orient='records')))
-        
+        zmqPublisher.publish((results.pandas().xyxy[0].to_json(orient='records')))
+    
 
 def get_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--pubHost',  nargs=1, type=str, help='Forwarder IP address for publish', default='210.107.197.247', dest='pubHost')
-    parser.add_argument('--pubPort',  nargs=1, type=str, help='Forwarder port number for publish', default='10020', dest='pubPort')
-    parser.add_argument('--pubTopic', nargs=1, type=str, help='Publish Topic', default='result', dest='pubTopic')
-    parser.add_argument('--subHost',  nargs=1, type=str, help='Forwarder IP address for subscribe', default='210.107.197.247', dest='subHost')
-    parser.add_argument('--subPort',  nargs=1, type=str, help='Forwarder port number for subscribe', default='10010', dest='subPort')
-    parser.add_argument('--subTopic', nargs=1, type=str, help='subscribe Topic', default='test', dest='subTopic')
-
+    parser.add_argument('--pubHost',  nargs='?', type=str, help='Forwarder IP address for publish', default='192.168.0.1', dest='pubHost')
+    parser.add_argument('--pubPort',  nargs='?', type=str, help='Forwarder port number for publish', default='10020', dest='pubPort')
+    parser.add_argument('--pubTopic', nargs='?', type=str, help='Publish Topic', default='result', dest='pubTopic')
+    parser.add_argument('--subHost',  nargs='?', type=str, help='Forwarder IP address for subscribe', default='192.168.0.1', dest='subHost')
+    parser.add_argument('--subPort',  nargs='?', type=str, help='Forwarder port number for subscribe', default='10010', dest='subPort')
+    parser.add_argument('--subTopic', nargs='?', type=str, help='subscribe Topic', default='test', dest='subTopic')
+    
     option_list = parser.parse_args()
     return option_list
 
